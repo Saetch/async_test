@@ -21,10 +21,11 @@ async fn main_async(){
     let thread_handle = std::thread::spawn(move || {              //this thread is just here so the f1 function gets blocked by something and can later resume
         wait_send_function(sender);
     });
-    
     let f1 = f1(receiver);
-    let f2 = f2();
-    futures::join!(f1, f2);
+    let f2 = f("Starting f2!");
+    let f3 = f("Starting f3!");
+
+    futures::join!(f1, f2, f3);
     thread_handle.join().unwrap();
 }
 
@@ -37,12 +38,15 @@ fn wait_send_function(sender: MyMpscSender<i32>){
 async fn f1(receiver: MpscReceiverFuture<i32>){
     println!("starting f1");
     let new_nmbr = receiver.await.unwrap();               
-    println!("Received nmbr is: {}", new_nmbr);
+    println!("F1: Received nmbr is: {}", new_nmbr);
 }
 
-async fn f2(){
-    println!("starting f2");
+
+async fn f(o: &str){
+    println!("{}", o);
 }
+
+
 
 struct MyMpscSender<T>{                //this should be privated, so it can't actually be cloned or accessed?
     sender: Sender<T>,           
@@ -60,6 +64,13 @@ impl <T>MyMpscSender<T>{
     }
 }
 
+impl <T>Clone for MyMpscSender<T>{
+    fn clone(&self) -> Self {
+        Self { sender: self.sender.clone(), waker: self.waker.clone() }
+    }
+}
+
+
 struct MpscReceiverFuture<T>{          
     receiver: Receiver<T>,
     waker_weak_p: Weak<Mutex<Option<Waker>>>,                  
@@ -70,15 +81,16 @@ impl <T>Future for MpscReceiverFuture<T> {
     type Output = Result<T, TryRecvError>;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        println!("Polling MpscReceiverFuture!");
         let waker = cx.waker().clone();
         if let Some(mutex) = self.waker_weak_p.upgrade(){
             let mut lock = mutex.lock().unwrap();
             *lock = Some(waker);
         }
         match self.receiver.try_recv(){
-            Ok(ret) => std::task::Poll::Ready(Ok(ret)),
+            Ok(ret) => {println!("... MpscReceiverFuture is done!");std::task::Poll::Ready(Ok(ret))},
             Err(err) => match err {
-                TryRecvError::Empty => std::task::Poll::Pending,
+                TryRecvError::Empty => {println!("... MpscReceiverFuture is pending!"); std::task::Poll::Pending},
                 TryRecvError::Disconnected => std::task::Poll::Ready(Err(err)),
             },
         }
